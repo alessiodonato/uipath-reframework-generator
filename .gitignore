@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+.env
+
+# Generated outputs (don't commit generated projects)
+output/
+outputs/
+/tmp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets — NEVER commit your API key
+.env.local
+secrets.json
+api_key.txt
+
+# Test artifacts
+tests/output/
+*.zip
+!examples/*.zip
