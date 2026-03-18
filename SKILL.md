@@ -34,7 +34,7 @@ beyond filling in credentials and adding UI selectors.
 │   ├── CloseAllApplications.xaml     ← TryCatch per app, graceful close
 │   └── KillAllProcesses.xaml        ← TryCatch per app, force kill
 └── Business/
-    ├── {StepName}.xaml               ← One per process step: rich pseudocode + variables
+    ├── {StepName}.xaml               ← One per process step: executable pseudo-steps + variables
     └── Open{AppName}.xaml            ← One per app: credential hints + login guide
 ```
 
@@ -75,7 +75,9 @@ The API returns a rich JSON with steps, pseudo-steps, exceptions, variables, and
 
 Key fields to extract:
 - `process_steps[].pseudo_steps` — concrete numbered sub-steps referencing Config keys
+- `process_steps[].config_keys_used` — list of Config keys read in this step
 - `process_steps[].output_variables` — variables needed by downstream steps
+- `process_steps[].throws` — list of {exception_type, condition} for exceptions
 - `business_exceptions[].suggested_step` — which step throws the exception
 - `transaction_item_fields[]` — typed fields with descriptions
 - `config_settings[]` — with type (Setting/Constant/Asset) and description
@@ -120,13 +122,20 @@ Always tell the user:
 ## Quality standards for generated XAML
 
 - Every activity must have `DisplayName` and `sap2010:Annotation.AnnotationText`
-- Annotations must be informative: reference Config keys, describe behavior, name exceptions
-- BusinessRuleException: caught in `Process.xaml` + `SetTransactionStatus` → no retry
-- ApplicationException: bubbles to `Main.xaml` → retry logic applies
-- Log messages follow convention: `[ProcessName] Step - Action | TxRef: ref`
-- All `TODO` items must be inside `<!-- TODO: ... -->` XML comments
+- **Rich annotations** use format: `Reads: Config('key') | Output: varName (Type) | Throws: ExceptionType if condition`
+- **Pseudo-steps** are generated as executable structure (LogMessage + Sequence placeholder), not just comments
+- **Exception handling**:
+  - BusinessRuleException: caught in `Process.xaml`, calls `SetTransactionStatus` with "BusinessException", does NOT rethrow → no retry
+  - ApplicationException: NOT caught in `Process.xaml`, bubbles to `Main.xaml` → retry logic applies
+- **Log message templates** (standardized across all files):
+  - InitAllSettings: `[ProcessName] Init - Loading configuration`
+  - GetTransactionData: `[ProcessName] GetTx - Transaction retrieved: {TxRef}`
+  - SetTransactionStatus: `[ProcessName] SetStatus - {TxRef} → {Status}`
+  - CloseAllApplications: `[ProcessName] Close - Closing {AppName}`
+  - KillAllProcesses: `[ProcessName] Kill - Terminating {ProcessExecutable}`
+- All `TODO` items must be inside `<!-- TODO: ... -->` XML comments or as annotation text
 - XAML must be valid well-formed XML (escape `&` as `&amp;`, `<` as `&lt;` in attributes)
-- Arguments must be explicitly typed — no untyped `Object` arguments
+- Arguments must be explicitly typed — `scg:Dictionary(x:String, x:Object)` is allowed for Config
 
 ## Error handling during generation
 
@@ -140,5 +149,6 @@ Always tell the user:
 
 Read these when needed:
 - `references/extraction-prompt.md` — Full system prompt for metadata extraction
-- `references/xaml-guide.md` — XAML injection patterns and type mappings
+- `references/xaml-guide.md` — XAML injection patterns, type mappings, and log templates
 - `references/config-template.md` — Config.xlsx structure and openpyxl code
+- `tests/test_generator.py` — Validation test suite (validates XML, checks Object types, verifies logs)
