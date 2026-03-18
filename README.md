@@ -58,12 +58,61 @@ YourProcessName/
 | Orchestrator log fields + log conventions | ✅ Complete | — |
 | SetTransactionStatus (Success/Business/System) | ✅ Complete | — |
 | Process step invocations in Process.xaml | ✅ Wired | — |
-| Business step pseudo-steps from PDD | ✅ As comments | Add UI selectors |
+| Business step pseudo-steps from PDD | ✅ Executable structure | Add UI selectors |
 | Output variables declared per step | ✅ Typed | — |
 | Application open/login stubs | ✅ With hints | Add selectors |
 | Config.xlsx Settings + Constants | ✅ Pre-filled | Add real URLs/creds |
 | project.json with NuGet dependencies | ✅ Complete | Studio installs on open |
 | Transaction source (Queue/Excel/DB/API) | ✅ Configured | — |
+
+---
+
+## Key features
+
+### Exception handling
+
+The generator implements correct UiPath ReFramework exception handling:
+
+| Exception Type | Caught in | Action | Retry? |
+|----------------|-----------|--------|--------|
+| `BusinessRuleException` | `Process.xaml` | `SetTransactionStatus → Failed` | ❌ No |
+| `ApplicationException` | `Main.xaml` | Rethrown, retry logic applies | ✅ Yes |
+
+- **BusinessRuleException**: Caught in Process.xaml, calls SetTransactionStatus with "BusinessException" status, does NOT rethrow
+- **ApplicationException**: NOT caught in Process.xaml, bubbles to Main.xaml for retry handling
+
+### Rich annotations
+
+Every XAML activity includes standardized annotations:
+
+```
+Reads: Config('AppName_URL'), Config('AppName_CredentialAsset')
+Output: confirmationNumber (String)
+Throws: ApplicationException if login fails
+```
+
+### Executable pseudo-steps
+
+Business steps from PDD are generated as executable structure (not just comments):
+
+```xml
+<!-- For each pseudo-step: -->
+<LogMessage Message="[ProcessName] StepName - Step 1: Navigate to URL" Level="Trace" />
+<Sequence DisplayName="Navigate to URL from Config('App_URL')">
+  <!-- TODO: implement - Navigate to URL from Config('App_URL') -->
+</Sequence>
+```
+
+### Standardized log messages
+
+All framework files use consistent log templates:
+
+| File | Log format |
+|------|------------|
+| InitAllSettings | `[ProcessName] Init - Loading configuration` |
+| GetTransactionData | `[ProcessName] GetTx - Transaction retrieved: {TxRef}` |
+| SetTransactionStatus | `[ProcessName] SetStatus - {TxRef} → {Status}` |
+| CloseAllApplications | `[ProcessName] Close - Closing {AppName}` |
 
 ---
 
@@ -169,19 +218,41 @@ uipath-reframework-generator/
 ├── LICENSE                            ← MIT
 ├── requirements.txt
 ├── setup.py
+├── OUTPUT_QUALITY_REPORT.md           ← Latest test run quality report
 ├── scripts/
-│   └── generate_reframework.py        ← Main generator (500+ lines)
+│   └── generate_reframework.py        ← Main generator (1000+ lines)
 ├── assets/
 │   └── xaml-templates/
 │       ├── Main.xaml                  ← State Machine template
-│       ├── Process.xaml               ← Process loop template
+│       ├── Process.xaml               ← Process loop + BusinessRuleException catch
 │       ├── InitAllApplications.xaml   ← App init template
 │       └── GetTransactionData.xaml    ← Transaction retrieval template
-└── references/
-    ├── extraction-prompt.md           ← Claude API system prompt
-    ├── xaml-guide.md                  ← XAML patterns + type mappings
-    └── config-template.md             ← Config.xlsx structure + openpyxl code
+├── references/
+│   ├── extraction-prompt.md           ← Claude API system prompt
+│   ├── xaml-guide.md                  ← XAML patterns, type mappings, log templates
+│   └── config-template.md             ← Config.xlsx structure + openpyxl code
+└── tests/
+    ├── test_generator.py              ← Validation test suite
+    ├── test_pdd.txt                   ← Sample PDD for testing
+    └── OUTPUT_QUALITY_REPORT.md       ← Test results
 ```
+
+---
+
+## Testing
+
+Run the test suite to validate generator output:
+
+```bash
+python tests/test_generator.py
+```
+
+The test:
+- Generates a project from mock metadata (no API call needed)
+- Validates all XAML files are well-formed XML
+- Checks for proper Object type usage
+- Verifies log message format consistency
+- Generates `OUTPUT_QUALITY_REPORT.md` with results
 
 ---
 
@@ -192,8 +263,8 @@ Contributions welcome! Open issues and PRs for:
 - [ ] Additional XAML activity types (Send Email, HTTP Request, DB Query)
 - [ ] Linear process template support (non-transactional)
 - [ ] Orchestrator deployment script generation (`publish.ps1`)
-- [ ] XAML validation before packaging
-- [ ] Sample PDD documents for testing
+- [x] ~~XAML validation before packaging~~ *(added in test suite)*
+- [x] ~~Sample PDD documents for testing~~ *(added test_pdd.txt)*
 - [ ] Support for UiPath Document Understanding activity stubs
 - [ ] Multi-language support (English + Italian PDD tested)
 
