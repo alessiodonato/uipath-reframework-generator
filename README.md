@@ -80,7 +80,7 @@ YourProcessName/
 
 ```bash
 # Clone the repo
-git clone https://github.com/YOUR_ORG/uipath-reframework-generator.git
+git clone https://github.com/alessiodonato/uipath-reframework-generator.git
 cd uipath-reframework-generator
 
 # Set your API key

@@ -158,8 +158,12 @@ JSON structure:
         "<3. Click Login button>",
         "<4. Verify dashboard is visible, else throw ApplicationException>"
       ],
+      "config_keys_used": ["<list of Config keys read in this step, e.g. 'SAP_URL', 'SAP_CredentialAsset'>"],
       "output_variables": [
         { "name": "<varName>", "type": "<String|Integer|Boolean|DataTable>", "description": "<what it contains>" }
+      ],
+      "throws": [
+        { "exception_type": "<BusinessRuleException | ApplicationException>", "condition": "<when thrown>" }
       ],
       "business_rule": "<any business rule or validation this step must enforce, or empty string>"
     }
@@ -196,6 +200,8 @@ Rules:
 - For each application: include URL setting and credential asset setting in config_settings
 - process_steps must be ONLY business steps — never include Init, GetTransactionData, SetTransactionStatus
 - pseudo_steps must be concrete and actionable — reference Config keys, credential assets, specific UI elements mentioned in the document
+- config_keys_used: list ALL Config keys referenced in this step's pseudo_steps
+- throws: list ALL exceptions this step might throw (BusinessRuleException for validation failures, ApplicationException for system failures)
 - If the document mentions specific fields, forms, buttons or screens — include them in pseudo_steps
 - business_exceptions: use UiPath naming convention (verb + noun + Exception)
 - output_variables in each step = variables that downstream steps will need
@@ -306,115 +312,276 @@ def generate_app_init_invocation(app: str) -> str:
     </ui:InvokeWorkflowFile>"""
 
 
-def generate_get_transaction_body(metadata: dict) -> str:
+def generate_get_transaction_body(metadata: dict, process_name: str) -> str:
+    """Generate the body for GetTransactionData.xaml with standardized log messages."""
     source = metadata.get("transaction_source", "Queue")
     queue = metadata.get("queue_name", "INPUT_QUEUE_NAME")
 
     if source == "Queue":
         return f"""
     <!-- ── Queue-based retrieval ── -->
+    <ui:LogMessage Level="Trace"
+      Message="['[{process_name}] GetTx - Fetching next transaction (attempt ' + in_TransactionNumber.ToString() + ')']"
+      DisplayName="Log: GetTx - Fetching next transaction" />
+
     <ui:GetQueueItem
       DisplayName="Get Queue Item from '{queue}'"
-      sap2010:Annotation.AnnotationText="Retrieves the next pending item from Orchestrator queue.&#xA;Returns Nothing when queue is empty → triggers End Process."
+      sap2010:Annotation.AnnotationText="Retrieves the next pending item from Orchestrator queue.&#xA;Returns Nothing when queue is empty → triggers End Process.&#xA;&#xA;Reads: Config('OrchestratorQueueName') | Output: out_TransactionItem (QueueItem) | Throws: N/A"
       QueueName="[If(String.IsNullOrEmpty(in_Config(&quot;OrchestratorQueueName&quot;).ToString()), &quot;{queue}&quot;, in_Config(&quot;OrchestratorQueueName&quot;).ToString())]"
       TimeoutMS="30000"
-      Result="[out_TransactionItem]" />"""
+      Result="[out_TransactionItem]" />
+
+    <If Condition="[out_TransactionItem IsNot Nothing]" DisplayName="Check if transaction retrieved">
+      <If.Then>
+        <ui:LogMessage Level="Info"
+          Message="['[{process_name}] GetTx - Transaction retrieved: ' + out_TransactionItem.Reference]"
+          DisplayName="Log: GetTx - Transaction retrieved" />
+      </If.Then>
+      <If.Else>
+        <ui:LogMessage Level="Info"
+          Message="'[{process_name}] GetTx - No more transactions'"
+          DisplayName="Log: GetTx - No more transactions" />
+      </If.Else>
+    </If>"""
     elif source == "Excel":
         return f"""
     <!-- ── Excel/DataTable-based retrieval ── -->
+    <ui:LogMessage Level="Trace"
+      Message="['[{process_name}] GetTx - Fetching next transaction (attempt ' + in_TransactionNumber.ToString() + ')']"
+      DisplayName="Log: GetTx - Fetching next transaction" />
+
     <!-- TODO: Load DataTable from Excel in InitAllApplications, pass as variable -->
     <If Condition="[in_TransactionNumber &lt;= TransactionData.Rows.Count]"
-      DisplayName="Check if more rows exist">
+      DisplayName="Check if more rows exist"
+      sap2010:Annotation.AnnotationText="Reads: TransactionData (DataTable) | Output: out_TransactionItem | Throws: N/A">
       <If.Then>
-        <Assign DisplayName="Get DataRow as TransactionItem">
-          <Assign.To><OutArgument x:TypeArguments="ui:QueueItem">[out_TransactionItem]</OutArgument></Assign.To>
-          <!-- TODO: Map DataRow fields to a QueueItem or use DataRow directly -->
-          <!-- Row index: in_TransactionNumber - 1 -->
-          <!-- Access fields: TransactionData.Rows(in_TransactionNumber - 1)("FieldName").ToString() -->
-        </Assign>
+        <Sequence DisplayName="Get DataRow as TransactionItem">
+          <Assign DisplayName="Get row">
+            <Assign.To><OutArgument x:TypeArguments="ui:QueueItem">[out_TransactionItem]</OutArgument></Assign.To>
+            <!-- TODO: Map DataRow fields to a QueueItem or use DataRow directly -->
+            <!-- Row index: in_TransactionNumber - 1 -->
+            <!-- Access fields: TransactionData.Rows(in_TransactionNumber - 1)("FieldName").ToString() -->
+          </Assign>
+          <ui:LogMessage Level="Info"
+            Message="['[{process_name}] GetTx - Transaction retrieved: Row ' + in_TransactionNumber.ToString()]"
+            DisplayName="Log: GetTx - Transaction retrieved" />
+        </Sequence>
       </If.Then>
       <If.Else>
-        <Assign DisplayName="No more rows — signal End">
-          <Assign.To><OutArgument x:TypeArguments="ui:QueueItem">[out_TransactionItem]</OutArgument></Assign.To>
-          <Assign.Value><InArgument x:TypeArguments="ui:QueueItem">Nothing</InArgument></Assign.Value>
-        </Assign>
+        <Sequence DisplayName="No more rows — signal End">
+          <Assign DisplayName="Set to Nothing">
+            <Assign.To><OutArgument x:TypeArguments="ui:QueueItem">[out_TransactionItem]</OutArgument></Assign.To>
+            <Assign.Value><InArgument x:TypeArguments="ui:QueueItem">Nothing</InArgument></Assign.Value>
+          </Assign>
+          <ui:LogMessage Level="Info"
+            Message="'[{process_name}] GetTx - No more transactions'"
+            DisplayName="Log: GetTx - No more transactions" />
+        </Sequence>
       </If.Else>
     </If>"""
     else:
         return f"""
     <!-- ── {source}-based retrieval ── -->
+    <ui:LogMessage Level="Trace"
+      Message="['[{process_name}] GetTx - Fetching next transaction (attempt ' + in_TransactionNumber.ToString() + ')']"
+      DisplayName="Log: GetTx - Fetching next transaction" />
+
     <!-- TODO: Implement {source} data source retrieval -->
     <!-- Pattern: set out_TransactionItem = Nothing when no more data available -->
     <!--
       For Database: use Execute Query activity, iterate rows using in_TransactionNumber as offset
       For API: use HTTP Request activity, paginate using in_TransactionNumber as page index
     -->
-    <Assign DisplayName="TODO: Get transaction from {source}">
-      <Assign.To><OutArgument x:TypeArguments="ui:QueueItem">[out_TransactionItem]</OutArgument></Assign.To>
-      <Assign.Value><InArgument x:TypeArguments="ui:QueueItem">Nothing</InArgument></Assign.Value>
-    </Assign>"""
+    <Sequence DisplayName="TODO: Get transaction from {source}"
+      sap2010:Annotation.AnnotationText="TODO: implement - Retrieve transaction from {source}&#xA;&#xA;Reads: N/A | Output: out_TransactionItem | Throws: ApplicationException if retrieval fails">
+      <Assign DisplayName="TODO: Get transaction from {source}">
+        <Assign.To><OutArgument x:TypeArguments="ui:QueueItem">[out_TransactionItem]</OutArgument></Assign.To>
+        <Assign.Value><InArgument x:TypeArguments="ui:QueueItem">Nothing</InArgument></Assign.Value>
+      </Assign>
+      <ui:LogMessage Level="Info"
+        Message="'[{process_name}] GetTx - No more transactions'"
+        DisplayName="Log: GetTx - No more transactions" />
+    </Sequence>"""
 
 
 def _vb_type(type_str: str) -> str:
-    """Map simple type names to VB.NET XAML type arguments."""
+    """Map simple type names to VB.NET XAML type arguments (for x:TypeArguments)."""
     mapping = {
         "String": "x:String",
         "Integer": "x:Int32",
+        "Int": "x:Int32",
         "Boolean": "x:Boolean",
+        "Bool": "x:Boolean",
         "DateTime": "s:DateTime",
+        "Date": "s:DateTime",
         "DataTable": "sd:DataTable",
+        "Table": "sd:DataTable",
         "Double": "x:Double",
+        "Decimal": "x:Double",
+        "Float": "x:Double",
     }
-    return mapping.get(type_str, "x:String")
+    return mapping.get(type_str, mapping.get(type_str.capitalize(), "x:String"))
+
+
+def map_type(raw_type: str) -> tuple[str, str]:
+    """
+    Map raw type string from extraction to XAML x:Type declaration.
+    Returns (xaml_type, todo_comment) where todo_comment is empty if type is recognized.
+    """
+    if not raw_type:
+        return "x:Type p:String", "<!-- TODO: verify type (was empty) -->"
+
+    normalized = raw_type.lower().strip()
+
+    # Direct mappings
+    type_map = {
+        "string": ("x:Type p:String", ""),
+        "str": ("x:Type p:String", ""),
+        "int": ("x:Type p:Int32", ""),
+        "integer": ("x:Type p:Int32", ""),
+        "bool": ("x:Type p:Boolean", ""),
+        "boolean": ("x:Type p:Boolean", ""),
+        "datatable": ("x:Type sd:DataTable", ""),
+        "table": ("x:Type sd:DataTable", ""),
+        "data table": ("x:Type sd:DataTable", ""),
+        "queueitem": ("x:Type uia:QueueItem", ""),
+        "queue item": ("x:Type uia:QueueItem", ""),
+        "dict": ("s:Dictionary(x:Type p:String, x:Type p:Object)", ""),
+        "dictionary": ("s:Dictionary(x:Type p:String, x:Type p:Object)", ""),
+        "config": ("s:Dictionary(x:Type p:String, x:Type p:Object)", ""),
+        "datetime": ("x:Type s:DateTime", ""),
+        "date": ("x:Type s:DateTime", ""),
+        "double": ("x:Type p:Double", ""),
+        "decimal": ("x:Type p:Double", ""),
+        "float": ("x:Type p:Double", ""),
+    }
+
+    if normalized in type_map:
+        return type_map[normalized]
+
+    # Check for list/array/collection patterns
+    if any(kw in normalized for kw in ["list", "array", "collection"]):
+        if "string" in normalized:
+            return "s:IEnumerable(x:Type p:String)", ""
+        return "s:IEnumerable(x:Type p:String)", f"<!-- TODO: verify collection element type for '{raw_type}' -->"
+
+    # Fallback: String with TODO
+    return "x:Type p:String", f"<!-- TODO: verify type for '{raw_type}' -->"
 
 
 # ─── STEP 4: GENERATE BUSINESS WORKFLOW STUBS ────────────────────────────────
 
+def _build_annotation(step: dict) -> str:
+    """Build rich annotation string: Reads: ... | Output: ... | Throws: ..."""
+    # Config keys used
+    config_keys = step.get("config_keys_used", [])
+    if config_keys:
+        reads_part = "Reads: " + ", ".join(f"Config('{k}')" for k in config_keys)
+    else:
+        reads_part = "Reads: N/A"
+
+    # Output variables
+    out_vars = step.get("output_variables", [])
+    if out_vars:
+        output_part = "Output: " + ", ".join(f"{v['name']} ({v.get('type', 'String')})" for v in out_vars)
+    else:
+        output_part = "Output: N/A"
+
+    # Throws
+    throws = step.get("throws", [])
+    if throws:
+        throws_part = "Throws: " + ", ".join(
+            f"{t['exception_type']} if {t['condition']}" for t in throws
+        )
+    else:
+        throws_part = "Throws: N/A"
+
+    return f"{reads_part} | {output_part} | {throws_part}"
+
+
+def _escape_xml_attr(text: str) -> str:
+    """Escape text for use in XML attributes."""
+    return (text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("\n", "&#xA;"))
+
+
 def generate_business_step_xaml(step: dict, process_name: str) -> str:
     """
-    Generates Business/StepName.xaml with rich pseudocode comments,
-    declared variables, and log bookends.
+    Generates Business/StepName.xaml with:
+    - Rich annotations (Reads/Output/Throws format)
+    - Pseudo-steps as executable structure (LogMessage + placeholder Sequence)
+    - Declared variables
+    - Log bookends
     """
-    # Build argument declarations
+    # Build argument declarations with rich annotations
+    annotation_summary = _build_annotation(step)
+
     in_args = f"""    <x:Property Name="in_TransactionItem" Type="InArgument(ui:QueueItem)"
-      sap2010:Annotation.AnnotationText="Current transaction item. Access fields via in_TransactionItem.SpecificContent(&quot;FieldName&quot;).ToString()" />
+      sap2010:Annotation.AnnotationText="Current transaction item. Access fields via in_TransactionItem.SpecificContent(&amp;quot;FieldName&amp;quot;).ToString()" />
     <x:Property Name="in_Config" Type="InArgument(scg:Dictionary(x:String, x:Object))"
-      sap2010:Annotation.AnnotationText="Configuration dictionary. Access values via in_Config(&quot;SettingName&quot;).ToString()" />"""
+      sap2010:Annotation.AnnotationText="Configuration dictionary. {_escape_xml_attr(annotation_summary)}" />"""
 
     out_arg_declarations = ""
-    out_arg_log_parts = ""
     variables_xml = ""
 
     for var in step.get("output_variables", []):
         vb_type = _vb_type(var["type"])
+        xaml_type, type_todo = map_type(var["type"])
+        desc = _escape_xml_attr(var.get('description', ''))
         out_arg_declarations += f"""
     <x:Property Name="out_{var['name']}" Type="OutArgument({vb_type})"
-      sap2010:Annotation.AnnotationText="{var['description']}" />"""
-        out_arg_log_parts += f" | {var['name']}: ' + out_{var['name']}.ToString() + '"
+      sap2010:Annotation.AnnotationText="{desc}" />{type_todo}"""
         variables_xml += f"""
       <Variable x:TypeArguments="{vb_type}" Name="{var['name']}" />"""
 
-    # Build pseudo-steps as comments
-    pseudo_comments = ""
-    for ps in step.get("pseudo_steps", []):
-        pseudo_comments += f"\n    <!-- {ps} -->"
+    # Build pseudo-steps as executable structure (LogMessage + Sequence placeholder with TODO annotation)
+    pseudo_steps_xml = ""
+    for idx, ps in enumerate(step.get("pseudo_steps", []), 1):
+        ps_escaped = _escape_xml_attr(ps)
+        pseudo_steps_xml += f"""
+    <!-- ── Pseudo-step {idx} ── -->
+    <ui:LogMessage Level="Trace"
+      Message="'[{process_name}] {step['name']} - Step {idx}: {_escape_xml_attr(ps)}'"
+      DisplayName="Log: Step {idx}" />
+    <Sequence DisplayName="{ps_escaped}"
+      sap2010:Annotation.AnnotationText="TODO: implement - {ps_escaped}">
+      <!-- TODO: implement - {ps} -->
+      <!-- Placeholder: replace this Sequence content with actual UiPath activities -->
+    </Sequence>
+"""
+
+    if not pseudo_steps_xml:
+        pseudo_steps_xml = """
+    <!-- No pseudo-steps defined — add implementation activities here -->
+    <Sequence DisplayName="TODO: Add implementation"
+      sap2010:Annotation.AnnotationText="TODO: implement - No pseudo-steps were extracted from PDD">
+      <!-- TODO: Add implementation activities -->
+    </Sequence>
+"""
 
     # Business rule as a validation block
     business_rule_xml = ""
     if step.get("business_rule"):
-        biz_exc_name = next(
-            (e["name"] for e in [] if step["name"] in e.get("suggested_step", "")),
-            "BusinessRuleException"
-        )
+        rule_escaped = _escape_xml_attr(step['business_rule'])
         business_rule_xml = f"""
-    <!-- ── Business Rule Validation ── -->
-    <!-- Rule: {step['business_rule']} -->
-    <!-- TODO: Implement validation below. Throw BusinessRuleException if rule is violated. -->
-    <!--
-    If <condition violates rule> Then
-      Throw New BusinessRuleException("{step['business_rule']}")
-    End If
-    -->"""
+    <!-- ══════════════════════════════════════════════════════════════ -->
+    <!-- BUSINESS RULE VALIDATION                                       -->
+    <!-- ══════════════════════════════════════════════════════════════ -->
+    <Sequence DisplayName="Validate: {rule_escaped}"
+      sap2010:Annotation.AnnotationText="TODO: implement - Validate business rule: {rule_escaped}&#xA;Throw BusinessRuleException if rule is violated.">
+      <!-- Rule: {step['business_rule']} -->
+      <!-- TODO: Implement validation. Throw BusinessRuleException if rule is violated.
+           Example:
+           If <condition violates rule> Then
+             Throw New BusinessRuleException("{step['business_rule']}")
+           End If
+      -->
+    </Sequence>
+"""
 
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <!--
@@ -429,6 +596,7 @@ def generate_business_step_xaml(step: dict, process_name: str) -> str:
   xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
   xmlns:mva="clr-namespace:Microsoft.VisualBasic.Activities;assembly=System.Activities"
+  xmlns:p="clr-namespace:System;assembly=mscorlib"
   xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
   xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
@@ -450,7 +618,7 @@ def generate_business_step_xaml(step: dict, process_name: str) -> str:
   </mva:VisualBasic.Settings>
 
   <Sequence
-    sap2010:Annotation.AnnotationText="{step['description']}&#xA;&#xA;Application: {step['app']}&#xA;&#xA;Pseudo-steps:&#xA;{chr(10).join(step.get('pseudo_steps', ['TODO: Add implementation steps']))}"
+    sap2010:Annotation.AnnotationText="{_escape_xml_attr(step['description'])}&#xA;&#xA;{_escape_xml_attr(annotation_summary)}"
     DisplayName="{step['name']}">
     <Sequence.Variables>{variables_xml}
     </Sequence.Variables>
@@ -460,20 +628,10 @@ def generate_business_step_xaml(step: dict, process_name: str) -> str:
       DisplayName="Log: {step['name']} started" />
 
     <!-- ════════════════════════════════════════════════════════════ -->
-    <!-- IMPLEMENTATION GUIDE — Replace comments with UiPath activities -->
+    <!-- IMPLEMENTATION — Pseudo-steps as executable structure        -->
     <!-- ════════════════════════════════════════════════════════════ -->
-    <!-- Application: {step['app']} -->
-    <!-- Config keys available:
-         - in_Config("{step['app']}_URL").ToString()
-         - in_Config("{step['app']}_CredentialAsset").ToString()
-    -->
-    <!-- Transaction fields available:
-         - in_TransactionItem.Reference
-         - in_TransactionItem.SpecificContent("FieldName").ToString()
-    -->
-    {pseudo_comments}
-    {business_rule_xml}
-
+{pseudo_steps_xml}
+{business_rule_xml}
     <!-- ════════════════════════════════════════════════════════════ -->
 
     <ui:LogMessage Level="Trace"
@@ -486,7 +644,7 @@ def generate_business_step_xaml(step: dict, process_name: str) -> str:
 
 
 def generate_open_app_xaml(app: str, process_name: str, config_settings: list) -> str:
-    """Generates Business/OpenAppName.xaml with credential handling hints."""
+    """Generates Business/OpenAppName.xaml with credential handling hints and standardized logs."""
     url_key = f"{app}_URL"
     cred_key = f"{app}_CredentialAsset"
     url_val = next((s["value"] for s in config_settings if s["name"] == url_key), "TODO")
@@ -505,19 +663,20 @@ def generate_open_app_xaml(app: str, process_name: str, config_settings: list) -
   xmlns:mva="clr-namespace:Microsoft.VisualBasic.Activities;assembly=System.Activities"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
   xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <x:Members>
     <x:Property Name="in_Config" Type="InArgument(scg:Dictionary(x:String, x:Object))"
-      sap2010:Annotation.AnnotationText="Configuration dictionary." />
+      sap2010:Annotation.AnnotationText="Reads: Config('{url_key}'), Config('{cred_key}') | Output: N/A | Throws: ApplicationException if login fails" />
   </x:Members>
   <Sequence
-    sap2010:Annotation.AnnotationText="Open and initialize {app}&#xA;URL: in_Config(&quot;{url_key}&quot;) → default: {url_val}&#xA;Credentials: Get Credentials asset from in_Config(&quot;{cred_key}&quot;)"
+    sap2010:Annotation.AnnotationText="Open and initialize {app}&#xA;URL: in_Config(&amp;quot;{url_key}&amp;quot;) → default: {url_val}&#xA;Credentials: Get Credentials asset from in_Config(&amp;quot;{cred_key}&amp;quot;)&#xA;&#xA;Reads: Config('{url_key}'), Config('{cred_key}') | Output: N/A | Throws: ApplicationException if login fails"
     DisplayName="Open {app}">
 
-    <ui:LogMessage Level="Trace"
-      Message="'[{process_name}] Opening {app}...'"
-      DisplayName="Log: Opening {app}" />
+    <ui:LogMessage Level="Info"
+      Message="'[{process_name}] Init - Opening {app}'"
+      DisplayName="Log: Init - Opening {app}" />
 
     <!-- ════════════════════════════════════════════════════════════ -->
     <!-- STEP 1: Get credentials from Orchestrator Asset             -->
@@ -525,6 +684,10 @@ def generate_open_app_xaml(app: str, process_name: str, config_settings: list) -
     <!--   Asset Name: in_Config("{cred_key}").ToString()            -->
     <!--   Output: username (String), password (SecureString)        -->
     <!-- ════════════════════════════════════════════════════════════ -->
+    <Sequence DisplayName="TODO: Get credentials"
+      sap2010:Annotation.AnnotationText="TODO: implement - Get credentials from Orchestrator asset Config('{cred_key}')">
+      <!-- TODO: implement - Get credentials from Orchestrator -->
+    </Sequence>
 
     <!-- ════════════════════════════════════════════════════════════ -->
     <!-- STEP 2: Open the application                                -->
@@ -534,6 +697,10 @@ def generate_open_app_xaml(app: str, process_name: str, config_settings: list) -
     <!-- Option B — Desktop app: Use "Start Process" or             -->
     <!--   "Open Application" activity                               -->
     <!-- ════════════════════════════════════════════════════════════ -->
+    <Sequence DisplayName="TODO: Open application"
+      sap2010:Annotation.AnnotationText="TODO: implement - Open {app} using Config('{url_key}')">
+      <!-- TODO: implement - Open browser/application -->
+    </Sequence>
 
     <!-- ════════════════════════════════════════════════════════════ -->
     <!-- STEP 3: Login                                               -->
@@ -541,6 +708,10 @@ def generate_open_app_xaml(app: str, process_name: str, config_settings: list) -
     <!-- Use "Type Into" with SendWindowMessages for password        -->
     <!-- Use "Click" for Login/Submit button                         -->
     <!-- ════════════════════════════════════════════════════════════ -->
+    <Sequence DisplayName="TODO: Login"
+      sap2010:Annotation.AnnotationText="TODO: implement - Enter credentials and click login button">
+      <!-- TODO: implement - Login flow -->
+    </Sequence>
 
     <!-- ════════════════════════════════════════════════════════════ -->
     <!-- STEP 4: Verify successful login                             -->
@@ -548,10 +719,14 @@ def generate_open_app_xaml(app: str, process_name: str, config_settings: list) -
     <!-- dashboard/home page loaded. If not, throw:                  -->
     <!--   New ApplicationException("{app} login failed")            -->
     <!-- ════════════════════════════════════════════════════════════ -->
+    <Sequence DisplayName="TODO: Verify login success"
+      sap2010:Annotation.AnnotationText="TODO: implement - Verify login succeeded. Throw ApplicationException if failed.">
+      <!-- TODO: implement - Verify login, throw ApplicationException if failed -->
+    </Sequence>
 
     <ui:LogMessage Level="Info"
-      Message="'[{process_name}] {app} opened and ready.'"
-      DisplayName="Log: {app} ready" />
+      Message="'[{process_name}] Init - {app} ready'"
+      DisplayName="Log: Init - {app} ready" />
 
   </Sequence>
 </Activity>
@@ -559,23 +734,32 @@ def generate_open_app_xaml(app: str, process_name: str, config_settings: list) -
 
 
 def generate_close_all_applications_xaml(apps: list, process_name: str) -> str:
-    """Generates Framework/CloseAllApplications.xaml."""
+    """Generates Framework/CloseAllApplications.xaml with standardized log messages."""
     close_blocks = ""
     for app in apps:
         close_blocks += f"""
     <!-- Close {app} -->
     <TryCatch DisplayName="Try close {app} (ignore errors)">
       <TryCatch.Try>
-        <!-- TODO: Add Close Tab / Close Browser / Kill Process for {app} -->
-        <ui:LogMessage Level="Trace" Message="'[{process_name}] Closing {app}...'" DisplayName="Log close {app}" />
+        <Sequence DisplayName="Close {app}">
+          <ui:LogMessage Level="Trace"
+            Message="'[{process_name}] Close - Closing {app}'"
+            DisplayName="Log: Close - Closing {app}" />
+          <!-- TODO: Add Close Tab / Close Browser activity for {app} -->
+          <ui:LogMessage Level="Trace"
+            Message="'[{process_name}] Close - {app} closed'"
+            DisplayName="Log: Close - {app} closed" />
+        </Sequence>
       </TryCatch.Try>
       <TryCatch.Catches>
-        <Catch x:TypeArguments="x:Exception">
-          <ActivityAction x:TypeArguments="x:Exception">
+        <Catch x:TypeArguments="s:Exception">
+          <ActivityAction x:TypeArguments="s:Exception">
             <ActivityAction.Argument>
-              <DelegateInArgument x:TypeArguments="x:Exception" Name="ex" />
+              <DelegateInArgument x:TypeArguments="s:Exception" Name="closeEx" />
             </ActivityAction.Argument>
-            <ui:LogMessage Level="Warn" Message="['[{process_name}] Warning: could not close {app}: ' + ex.Message]" DisplayName="Log close warning" />
+            <ui:LogMessage Level="Warn"
+              Message="['[{process_name}] Close - Close failed (non-critical): ' + closeEx.Message]"
+              DisplayName="Log: Close failed (non-critical)" />
           </ActivityAction>
         </Catch>
       </TryCatch.Catches>
@@ -589,41 +773,59 @@ def generate_close_all_applications_xaml(apps: list, process_name: str) -> str:
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
   xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <x:Members>
-    <x:Property Name="in_Config" Type="InArgument(scg:Dictionary(x:String, x:Object))" />
+    <x:Property Name="in_Config" Type="InArgument(scg:Dictionary(x:String, x:Object))"
+      sap2010:Annotation.AnnotationText="Reads: N/A | Output: N/A | Throws: N/A (all exceptions caught)" />
   </x:Members>
-  <Sequence DisplayName="Close All Applications" sap2010:Annotation.AnnotationText="Gracefully close all applications used in {process_name}.&#xA;Each close is wrapped in TryCatch to prevent End Process from failing.">
-
-    <ui:LogMessage Level="Trace" Message="'[{process_name}] Closing all applications...'" DisplayName="Log: closing apps" />
+  <Sequence DisplayName="Close All Applications"
+    sap2010:Annotation.AnnotationText="Gracefully close all applications used in {process_name}.&#xA;Each close is wrapped in TryCatch to prevent End Process from failing.&#xA;&#xA;Reads: N/A | Output: N/A | Throws: N/A (all exceptions caught)">
     {close_blocks}
-    <ui:LogMessage Level="Trace" Message="'[{process_name}] All applications closed.'" DisplayName="Log: all closed" />
-
   </Sequence>
 </Activity>
 """
 
 
 def generate_kill_all_processes_xaml(apps: list, process_name: str) -> str:
-    """Generates Framework/KillAllProcesses.xaml."""
+    """Generates Framework/KillAllProcesses.xaml with standardized log messages."""
     kill_blocks = ""
     for app in apps:
+        # Generate a reasonable process executable name guess
+        app_lower = app.lower()
+        if "chrome" in app_lower or "web" in app_lower or "browser" in app_lower:
+            process_exe = "chrome.exe"
+        elif "excel" in app_lower:
+            process_exe = "EXCEL.EXE"
+        elif "sap" in app_lower:
+            process_exe = "saplogon.exe"
+        elif "outlook" in app_lower:
+            process_exe = "OUTLOOK.EXE"
+        else:
+            process_exe = f"{app}.exe"
+
         kill_blocks += f"""
     <!-- Kill {app} process if still running -->
     <TryCatch DisplayName="Kill {app} if running">
       <TryCatch.Try>
-        <!-- TODO: Add Kill Process activity for {app} process name -->
-        <!-- Process name examples: chrome.exe, iexplore.exe, SAPGUI.exe, EXCEL.EXE -->
-        <ui:LogMessage Level="Trace" Message="'[{process_name}] Killing {app} process...'" DisplayName="Log kill {app}" />
+        <Sequence DisplayName="Terminate {app}">
+          <ui:LogMessage Level="Trace"
+            Message="'[{process_name}] Kill - Terminating {process_exe}'"
+            DisplayName="Log: Kill - Terminating {process_exe}" />
+          <!-- TODO: Add Kill Process activity -->
+          <!-- ProcessName: "{process_exe}" (without .exe if using UiPath activity) -->
+        </Sequence>
       </TryCatch.Try>
       <TryCatch.Catches>
-        <Catch x:TypeArguments="x:Exception">
-          <ActivityAction x:TypeArguments="x:Exception">
+        <Catch x:TypeArguments="s:Exception">
+          <ActivityAction x:TypeArguments="s:Exception">
             <ActivityAction.Argument>
-              <DelegateInArgument x:TypeArguments="x:Exception" Name="ex" />
+              <DelegateInArgument x:TypeArguments="s:Exception" Name="killEx" />
             </ActivityAction.Argument>
-            <ui:LogMessage Level="Warn" Message="['[{process_name}] {app} process not found (already closed): ' + ex.Message]" DisplayName="Log kill warning" />
+            <ui:LogMessage Level="Trace"
+              Message="['[{process_name}] Kill - {app} process not running: ' + killEx.Message]"
+              DisplayName="Log: Process not running" />
           </ActivityAction>
         </Catch>
       </TryCatch.Catches>
@@ -636,21 +838,24 @@ def generate_kill_all_processes_xaml(apps: list, process_name: str) -> str:
   xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <Sequence DisplayName="Kill All Processes" sap2010:Annotation.AnnotationText="Force-kill all application processes.&#xA;Called at Init start (clean state) and End Process.&#xA;Each kill is wrapped in TryCatch.">
-
-    <ui:LogMessage Level="Trace" Message="'[{process_name}] Killing all processes...'" DisplayName="Log: killing processes" />
+  <Sequence DisplayName="Kill All Processes"
+    sap2010:Annotation.AnnotationText="Force-kill all application processes.&#xA;Called at Init start (clean state) and End Process.&#xA;Each kill is wrapped in TryCatch.&#xA;&#xA;Reads: N/A | Output: N/A | Throws: N/A (all exceptions caught)">
     {kill_blocks}
-    <ui:LogMessage Level="Trace" Message="'[{process_name}] All processes killed.'" DisplayName="Log: done" />
-
   </Sequence>
 </Activity>
 """
 
 
 def generate_set_transaction_status_xaml(process_name: str) -> str:
-    """Generates Framework/SetTransactionStatus.xaml."""
+    """
+    Generates Framework/SetTransactionStatus.xaml with three explicit branches:
+    - Success: marks Successful, logs completion
+    - BusinessRuleException: marks Failed, logs business rule violation, NO retry (does not rethrow)
+    - ApplicationException: rethrows so Main.xaml can handle retry logic
+    """
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <Activity
   mc:Ignorable="sap sap2010"
@@ -661,57 +866,83 @@ def generate_set_transaction_status_xaml(process_name: str) -> str:
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
   xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:uia="clr-namespace:UiPath.Core;assembly=UiPath.Core"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <x:Members>
     <x:Property Name="in_TransactionItem" Type="InArgument(ui:QueueItem)"
       sap2010:Annotation.AnnotationText="The queue item whose status will be set." />
     <x:Property Name="in_TransactionStatus" Type="InArgument(x:String)"
-      sap2010:Annotation.AnnotationText="Status to set: 'Successful', 'Failed', or 'Abandoned'." />
-    <x:Property Name="in_TransactionError" Type="InArgument(x:Exception)"
-      sap2010:Annotation.AnnotationText="Exception to attach on failure (optional)." />
-    <x:Property Name="in_Config" Type="InArgument(scg:Dictionary(x:String, x:Object))" />
+      sap2010:Annotation.AnnotationText="Status to set: 'Successful', 'BusinessException', or 'SystemException'." />
+    <x:Property Name="in_TransactionError" Type="InArgument(s:Exception)"
+      sap2010:Annotation.AnnotationText="Exception object (required for BusinessException and SystemException branches)." />
+    <x:Property Name="in_Config" Type="InArgument(scg:Dictionary(x:String, x:Object))"
+      sap2010:Annotation.AnnotationText="Reads: N/A | Output: N/A | Throws: N/A" />
   </x:Members>
-  <Sequence DisplayName="Set Transaction Status" sap2010:Annotation.AnnotationText="Sets Orchestrator queue item status and logs the outcome.">
+  <Sequence DisplayName="Set Transaction Status"
+    sap2010:Annotation.AnnotationText="Sets Orchestrator queue item status.&#xA;&#xA;Branch Success: Status=Successful, logs completion&#xA;Branch BusinessRuleException: Status=Failed, NO retry, does NOT rethrow&#xA;Branch ApplicationException: Rethrows to Main.xaml for retry handling">
 
-    <Switch x:TypeArguments="x:String" Expression="[in_TransactionStatus]" DisplayName="Switch on status">
+    <ui:LogMessage Level="Trace"
+      Message="['[{process_name}] SetStatus - ' + in_TransactionItem.Reference + ' → ' + in_TransactionStatus + ' | ' + If(in_TransactionError IsNot Nothing, in_TransactionError.Message, &quot;OK&quot;)]"
+      DisplayName="Log: SetStatus entry" />
+
+    <Switch x:TypeArguments="x:String" Expression="[in_TransactionStatus]" DisplayName="Switch on transaction status">
       <Switch.Cases>
 
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <!-- BRANCH: SUCCESS                                                -->
+        <!-- Sets queue item to Successful, logs completion message         -->
+        <!-- ══════════════════════════════════════════════════════════════ -->
         <Case x:Key="Successful">
-          <Sequence DisplayName="Mark Successful">
-            <ui:SetTransactionProgress DisplayName="Set Queue Item Successful"
+          <Sequence DisplayName="Branch: Success"
+            sap2010:Annotation.AnnotationText="Reads: N/A | Output: N/A | Throws: N/A">
+            <ui:SetTransactionStatus DisplayName="Set Queue Item → Successful"
               QueueItem="[in_TransactionItem]"
-              Progress="Successful" />
+              Status="Successful" />
             <ui:LogMessage Level="Info"
-              Message="['[{process_name}] Transaction SUCCESSFUL | Ref: ' + in_TransactionItem.Reference]"
-              DisplayName="Log success" />
+              Message="['[{process_name}] Transaction ' + in_TransactionItem.Reference + ' completed successfully']"
+              DisplayName="Log: Transaction completed successfully" />
           </Sequence>
         </Case>
 
-        <Case x:Key="Failed">
-          <Sequence DisplayName="Mark Failed">
-            <If Condition="[in_TransactionError IsNot Nothing AndAlso TypeOf in_TransactionError Is UiPath.Core.BusinessRuleException]"
-              DisplayName="Business vs System failure">
-              <If.Then>
-                <Sequence DisplayName="Business Rule Failure (no retry)">
-                  <ui:SetTransactionProgress DisplayName="Set Queue Item Failed — Business"
-                    QueueItem="[in_TransactionItem]"
-                    Progress="Failed" />
-                  <ui:LogMessage Level="Warn"
-                    Message="['[{process_name}] Transaction FAILED (Business) | Ref: ' + in_TransactionItem.Reference + ' | ' + in_TransactionError.Message]"
-                    DisplayName="Log business failure" />
-                </Sequence>
-              </If.Then>
-              <If.Else>
-                <Sequence DisplayName="System Failure (retryable)">
-                  <ui:SetTransactionProgress DisplayName="Set Queue Item Failed — System"
-                    QueueItem="[in_TransactionItem]"
-                    Progress="Failed" />
-                  <ui:LogMessage Level="Error"
-                    Message="['[{process_name}] Transaction FAILED (System) | Ref: ' + in_TransactionItem.Reference + ' | ' + If(in_TransactionError IsNot Nothing, in_TransactionError.Message, &quot;Unknown error&quot;)]"
-                    DisplayName="Log system failure" />
-                </Sequence>
-              </If.Else>
-            </If>
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <!-- BRANCH: BUSINESS RULE EXCEPTION                                -->
+        <!-- Sets queue item to Failed with reason, NO retry triggered      -->
+        <!-- Does NOT rethrow — exception is fully handled here             -->
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <Case x:Key="BusinessException">
+          <Sequence DisplayName="Branch: BusinessRuleException (no retry)"
+            sap2010:Annotation.AnnotationText="Reads: N/A | Output: N/A | Throws: N/A (exception is consumed, not rethrown)">
+            <ui:SetTransactionStatus DisplayName="Set Queue Item → Failed (Business)"
+              QueueItem="[in_TransactionItem]"
+              Status="Failed"
+              Reason="[in_TransactionError.Message]"
+              ErrorType="Business" />
+            <ui:LogMessage Level="Warn"
+              Message="['[{process_name}] Business rule violation on ' + in_TransactionItem.Reference + ': ' + in_TransactionError.Message]"
+              DisplayName="Log: Business rule violation" />
+            <!-- NO Rethrow here — BusinessRuleException does not trigger retry -->
+          </Sequence>
+        </Case>
+
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <!-- BRANCH: APPLICATION / SYSTEM EXCEPTION                         -->
+        <!-- Rethrows the exception so Main.xaml can handle retry logic     -->
+        <!-- Main.xaml increments retry counter and may go back to Init     -->
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <Case x:Key="SystemException">
+          <Sequence DisplayName="Branch: ApplicationException (rethrow for retry)"
+            sap2010:Annotation.AnnotationText="Reads: N/A | Output: N/A | Throws: ApplicationException (rethrown to Main.xaml)">
+            <ui:SetTransactionStatus DisplayName="Set Queue Item → Failed (Application)"
+              QueueItem="[in_TransactionItem]"
+              Status="Failed"
+              Reason="[in_TransactionError.Message]"
+              ErrorType="Application" />
+            <ui:LogMessage Level="Error"
+              Message="['[{process_name}] Application exception on ' + in_TransactionItem.Reference + ': ' + in_TransactionError.Message + ' — rethrowing for retry']"
+              DisplayName="Log: Application exception (will retry)" />
+            <!-- Rethrow so Main.xaml can handle retry logic -->
+            <Rethrow DisplayName="Rethrow to Main.xaml for retry handling" />
           </Sequence>
         </Case>
 
@@ -724,7 +955,7 @@ def generate_set_transaction_status_xaml(process_name: str) -> str:
 
 
 def generate_init_all_settings_xaml(process_name: str) -> str:
-    """Generates Framework/InitAllSettings.xaml."""
+    """Generates Framework/InitAllSettings.xaml with standardized log messages."""
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <Activity
   mc:Ignorable="sap sap2010"
@@ -739,36 +970,62 @@ def generate_init_all_settings_xaml(process_name: str) -> str:
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <x:Members>
     <x:Property Name="in_ConfigFile" Type="InArgument(x:String)"
-      sap2010:Annotation.AnnotationText="Relative path to Config.xlsx. Default: Data\\Config.xlsx" />
+      sap2010:Annotation.AnnotationText="Relative path to Config.xlsx. Default: Data\\Config.xlsx | Reads: N/A | Output: N/A | Throws: N/A" />
     <x:Property Name="in_ConfigSheets" Type="InArgument(s:String[])"
-      sap2010:Annotation.AnnotationText="Sheet names to read. Default: [&quot;Settings&quot;, &quot;Constants&quot;]" />
+      sap2010:Annotation.AnnotationText="Sheet names to read. Default: [&amp;quot;Settings&amp;quot;, &amp;quot;Constants&amp;quot;] | Reads: N/A | Output: N/A | Throws: N/A" />
     <x:Property Name="out_Config" Type="OutArgument(scg:Dictionary(x:String, x:Object))"
-      sap2010:Annotation.AnnotationText="Output: Dictionary populated with all settings and constants." />
+      sap2010:Annotation.AnnotationText="Output: Dictionary populated with all settings and constants. | Reads: Config.xlsx | Output: out_Config (Dictionary) | Throws: ApplicationException if file not found" />
   </x:Members>
   <Sequence DisplayName="Init All Settings"
-    sap2010:Annotation.AnnotationText="Reads Config.xlsx and returns a Dictionary(String, Object).&#xA;Also reads Orchestrator Assets if connected.&#xA;Called ONCE at process start (first Init state only).">
+    sap2010:Annotation.AnnotationText="Reads Config.xlsx and returns a Dictionary(String, Object).&#xA;Also reads Orchestrator Assets if connected.&#xA;Called ONCE at process start (first Init state only).&#xA;&#xA;Reads: Data/Config.xlsx | Output: out_Config (Dictionary) | Throws: ApplicationException if config load fails">
 
-    <ui:LogMessage Level="Trace" Message="'[{process_name}] Loading configuration from: ' + in_ConfigFile" DisplayName="Log: loading config" />
+    <ui:LogMessage Level="Info"
+      Message="'[{process_name}] Init - Loading configuration'"
+      DisplayName="Log: Init - Loading configuration" />
 
-    <!-- ── Read Settings sheet ── -->
-    <ui:ExcelApplicationScope DisplayName="Open Config.xlsx"
-      WorkbookPath="[in_ConfigFile]">
-      <ui:ExcelApplicationScope.Body>
-        <ActivityAction>
-          <Sequence DisplayName="Read sheets">
-            <!-- TODO: Use ReadRange activity for each sheet in in_ConfigSheets -->
-            <!-- Then iterate rows and populate out_Config dictionary:           -->
-            <!-- out_Config(row("Name").ToString()) = row("Value")               -->
-          </Sequence>
-        </ActivityAction>
-      </ui:ExcelApplicationScope.Body>
-    </ui:ExcelApplicationScope>
+    <TryCatch DisplayName="Try load configuration">
+      <TryCatch.Try>
+        <Sequence DisplayName="Load Config.xlsx">
+          <!-- ── Read Settings sheet ── -->
+          <ui:ExcelApplicationScope DisplayName="Open Config.xlsx"
+            WorkbookPath="[in_ConfigFile]">
+            <ui:ExcelApplicationScope.Body>
+              <ActivityAction>
+                <Sequence DisplayName="Read sheets">
+                  <!-- TODO: Use ReadRange activity for each sheet in in_ConfigSheets -->
+                  <!-- Then iterate rows and populate out_Config dictionary:           -->
+                  <!-- out_Config(row("Name").ToString()) = row("Value")               -->
+                </Sequence>
+              </ActivityAction>
+            </ui:ExcelApplicationScope.Body>
+          </ui:ExcelApplicationScope>
 
-    <!-- ── Override with Orchestrator Assets (if connected) ── -->
-    <!-- TODO (optional): Use GetAsset activity for sensitive values -->
-    <!-- This overrides Config.xlsx values with Orchestrator-managed assets -->
+          <!-- ── Override with Orchestrator Assets (if connected) ── -->
+          <!-- TODO (optional): Use GetAsset activity for sensitive values -->
+          <!-- This overrides Config.xlsx values with Orchestrator-managed assets -->
 
-    <ui:LogMessage Level="Trace" Message="'[{process_name}] Configuration loaded. Keys: ' + out_Config.Count.ToString()" DisplayName="Log: config loaded" />
+          <ui:LogMessage Level="Info"
+            Message="['[{process_name}] Init - Configuration loaded. Keys: ' + out_Config.Count.ToString()]"
+            DisplayName="Log: Init - Configuration loaded" />
+        </Sequence>
+      </TryCatch.Try>
+      <TryCatch.Catches>
+        <Catch x:TypeArguments="s:Exception">
+          <ActivityAction x:TypeArguments="s:Exception">
+            <ActivityAction.Argument>
+              <DelegateInArgument x:TypeArguments="s:Exception" Name="configException" />
+            </ActivityAction.Argument>
+            <Sequence DisplayName="Handle config load error">
+              <ui:LogMessage Level="Error"
+                Message="['[{process_name}] Init - Failed to load config: ' + configException.Message]"
+                DisplayName="Log: Init - Failed to load config" />
+              <Throw Exception="[New ApplicationException(&quot;[{process_name}] Failed to load configuration: &quot; + configException.Message, configException)]"
+                DisplayName="Throw ApplicationException" />
+            </Sequence>
+          </ActivityAction>
+        </Catch>
+      </TryCatch.Catches>
+    </TryCatch>
 
   </Sequence>
 </Activity>
@@ -778,8 +1035,12 @@ def generate_init_all_settings_xaml(process_name: str) -> str:
 # ─── STEP 5: GENERATE CONFIG.XLSX ─────────────────────────────────────────────
 
 def generate_config_xlsx(metadata: dict, output_path: str):
-    import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    except ImportError:
+        print("  ⚠️  openpyxl not installed - Config.xlsx skipped (install with: pip install openpyxl)")
+        return
 
     wb = openpyxl.Workbook()
     process_name = metadata["process_name"]
@@ -927,7 +1188,7 @@ def build_project(metadata: dict, output_base: str) -> str:
     print("  ✓ Framework/InitAllApplications.xaml")
 
     # ── Framework/GetTransactionData.xaml ──
-    get_tx_body = generate_get_transaction_body(metadata)
+    get_tx_body = generate_get_transaction_body(metadata, process_name)
     get_tx = load_template("GetTransactionData.xaml")
     get_tx = apply_common_replacements(get_tx, metadata)
     get_tx = get_tx.replace("{{GET_TRANSACTION_BODY}}", get_tx_body)
@@ -1000,7 +1261,7 @@ def generate_project_readme(metadata: dict) -> str:
 
 > {metadata['process_description']}
 
-**Generated** by [ReFramework Generator](https://github.com/YOUR_ORG/uipath-reframework-generator) on {datetime.now().strftime("%Y-%m-%d")}
+**Generated** by [ReFramework Generator](https://github.com/alessiodonato/uipath-reframework-generator) on {datetime.now().strftime("%Y-%m-%d")}
 **Transaction Source:** `{metadata.get('transaction_source', 'Queue')}` | **Max Retries:** `{metadata.get('max_retry_number', 3)}`
 
 ---

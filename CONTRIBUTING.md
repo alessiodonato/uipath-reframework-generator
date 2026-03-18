@@ -103,7 +103,7 @@ Before submitting, confirm:
 
 ```bash
 # Clone your fork
-git clone https://github.com/YOUR_USERNAME/uipath-reframework-generator.git
+git clone https://github.com/alessiodonato/uipath-reframework-generator.git
 cd uipath-reframework-generator
 
 # Install dependencies

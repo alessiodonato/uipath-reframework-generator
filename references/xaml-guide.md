@@ -32,6 +32,25 @@ All placeholders use `{{PLACEHOLDER}}` format, replaced via Python `.replace()`.
 | QueueItem | `ui:QueueItem` |
 | Dictionary | `scg:Dictionary(x:String, x:Object)` |
 
+## Type mappings (for argument declarations)
+
+Use this mapping when declaring XAML arguments. The generator's `map_type()` function applies this (case-insensitive).
+
+| Raw type (from extraction) | XAML x:Type declaration |
+|---------------------------|-------------------------|
+| `string` | `x:Type p:String` |
+| `int`, `integer` | `x:Type p:Int32` |
+| `bool`, `boolean` | `x:Type p:Boolean` |
+| `list`, `array`, `collection of strings` | `s:IEnumerable(x:Type p:String)` |
+| `datatable`, `table` | `x:Type sd:DataTable` |
+| `queue item`, `queueitem` | `x:Type uia:QueueItem` |
+| `dict`, `dictionary`, `config` | `s:Dictionary(x:Type p:String, x:Type p:Object)` |
+| `datetime`, `date` | `x:Type s:DateTime` |
+| `double`, `decimal`, `float` | `x:Type p:Double` |
+| _any other type not recognized_ | `x:Type p:String` with `<!-- TODO: verify type for '{raw_type}' -->` |
+
+**Rule**: Never use `x:Type p:Object` without an explicit TODO comment explaining why.
+
 ## XML attribute escaping rules
 
 When injecting text into XML attributes (e.g., `Annotation.AnnotationText`):
@@ -127,6 +146,50 @@ sap2010:Annotation.AnnotationText="Step 1: Navigate to URL&#xA;Step 2: Enter cre
 [ProcessName] Init Error: Could not load Config.xlsx
 [ProcessName] Process completed. Total transactions: 42
 ```
+
+## Log message templates
+
+Use these exact templates in each generated XAML file. The generator interpolates `{ProcessName}` from metadata.
+
+### InitAllSettings.xaml
+| Event | Template |
+|-------|----------|
+| Start | `[{ProcessName}] Init - Loading configuration` |
+| Success | `[{ProcessName}] Init - Configuration loaded. Keys: {Config.Count}` |
+| Error | `[{ProcessName}] Init - Failed to load config: {exception.Message}` |
+
+### InitAllApplications.xaml (per app)
+| Event | Template |
+|-------|----------|
+| Opening | `[{ProcessName}] Init - Opening {AppName}` |
+| Ready | `[{ProcessName}] Init - {AppName} ready` |
+
+### GetTransactionData.xaml
+| Event | Template |
+|-------|----------|
+| Fetching | `[{ProcessName}] GetTx - Fetching next transaction (attempt {retryNumber})` |
+| Retrieved | `[{ProcessName}] GetTx - Transaction retrieved: {TxRef}` |
+| Empty | `[{ProcessName}] GetTx - No more transactions` |
+
+### SetTransactionStatus.xaml
+| Event | Template |
+|-------|----------|
+| Any status | `[{ProcessName}] SetStatus - {TxRef} → {Status} \| {Reason}` |
+| Success | `[{ProcessName}] Transaction {TxRef} completed successfully` |
+| BusinessRuleException | `[{ProcessName}] Business rule violation on {TxRef}: {exception.Message}` |
+| ApplicationException | _(no log, exception is rethrown to Main.xaml)_ |
+
+### CloseAllApplications.xaml (per app)
+| Event | Template |
+|-------|----------|
+| Closing | `[{ProcessName}] Close - Closing {AppName}` |
+| Closed | `[{ProcessName}] Close - {AppName} closed` |
+| Failed (non-critical) | `[{ProcessName}] Close - Close failed (non-critical): {exception.Message}` |
+
+### KillAllProcesses.xaml (per app)
+| Event | Template |
+|-------|----------|
+| Killing | `[{ProcessName}] Kill - Terminating {ProcessExecutable}` |
 
 ## Config dictionary access in VB.NET
 

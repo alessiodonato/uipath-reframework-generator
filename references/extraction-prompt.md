@@ -39,11 +39,18 @@ Return ONLY a valid JSON object — no markdown fences, no preamble, no explanat
         "3. Click Login button (selector: tag='BUTTON' aaname='Login')",
         "4. Verify dashboard visible, else throw ApplicationException('Login failed')"
       ],
+      "config_keys_used": ["<list of Config keys read in this step, e.g. 'AppName_URL', 'AppName_CredentialAsset'>"],
       "output_variables": [
         {
           "name": "<camelCase varName>",
           "type": "<String|Integer|Boolean|DataTable|DateTime>",
           "description": "<what it contains, used by downstream steps>"
+        }
+      ],
+      "throws": [
+        {
+          "exception_type": "<BusinessRuleException | ApplicationException>",
+          "condition": "<when this exception is thrown, e.g. 'Invoice already processed'>"
         }
       ],
       "business_rule": "<specific business rule or validation this step enforces, or empty string>"
@@ -82,7 +89,9 @@ Rules:
 - For EACH application: include one URL Setting and one CredentialAsset Setting in config_settings
 - process_steps: ONLY business steps — never include Init, GetTransactionData, SetTransactionStatus, EndProcess
 - pseudo_steps: must be concrete and actionable. Reference specific Config keys, credential asset names, UI element descriptions mentioned in the document. Be specific about what to click, type, verify.
+- config_keys_used: list ALL Config keys referenced in this step's pseudo_steps (e.g. 'AppName_URL', 'AppName_CredentialAsset')
 - output_variables: only variables that ANOTHER step downstream will need as input
+- throws: list ALL exceptions this step might throw (BusinessRuleException for business rule violations, ApplicationException for system/application failures)
 - business_exceptions: use UiPath naming convention (PascalCase + Exception suffix)
 - business_exceptions: thrown when a business rule is violated — no retry happens
 - system_exceptions: thrown when an application or infrastructure fails — triggers retry

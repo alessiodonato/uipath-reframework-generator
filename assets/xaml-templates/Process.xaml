@@ -10,6 +10,7 @@
   xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
   xmlns:mva="clr-namespace:Microsoft.VisualBasic.Activities;assembly=System.Activities"
+  xmlns:s="clr-namespace:System;assembly=mscorlib"
   xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
   xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
   xmlns:ui="http://schemas.uipath.com/workflow/activities"
@@ -17,9 +18,9 @@
   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <x:Members>
     <x:Property Name="in_TransactionItem" Type="InArgument(ui:QueueItem)"
-      sap2010:Annotation.AnnotationText="Current transaction item. Access fields via in_TransactionItem.SpecificContent(&quot;FieldName&quot;).ToString()" />
+      sap2010:Annotation.AnnotationText="Current transaction item. Access fields via in_TransactionItem.SpecificContent(&amp;quot;FieldName&amp;quot;).ToString() | Reads: N/A | Output: N/A | Throws: N/A" />
     <x:Property Name="in_Config" Type="InArgument(scg:Dictionary(x:String, x:Object))"
-      sap2010:Annotation.AnnotationText="Configuration dictionary. Access via in_Config(&quot;SettingName&quot;).ToString()" />
+      sap2010:Annotation.AnnotationText="Configuration dictionary. Access via in_Config(&amp;quot;SettingName&amp;quot;).ToString() | Reads: all Config keys | Output: N/A | Throws: BusinessRuleException (caught), ApplicationException (rethrown)" />
   </x:Members>
   <mva:VisualBasic.Settings>
     <mva:VisualBasicSettings>
@@ -31,27 +32,70 @@
   </mva:VisualBasic.Settings>
 
   <Sequence
-    sap2010:Annotation.AnnotationText="{{PROCESS_NAME}} — Process Transaction&#xA;{{PROCESS_DESCRIPTION}}&#xA;&#xA;BusinessRuleException → caught here → SetTransactionStatus Failed (no retry)&#xA;ApplicationException → NOT caught here → bubbles to Main.xaml → retry logic"
+    sap2010:Annotation.AnnotationText="{{PROCESS_NAME}} — Process Transaction&#xA;{{PROCESS_DESCRIPTION}}&#xA;&#xA;Exception Handling:&#xA;• BusinessRuleException → caught here → SetTransactionStatus(Failed) → NO retry, NO rethrow&#xA;• ApplicationException → NOT caught here → bubbles to Main.xaml → retry logic applies&#xA;&#xA;Reads: all Config keys | Output: N/A | Throws: ApplicationException (rethrown to Main.xaml)"
     DisplayName="Process — {{PROCESS_NAME}}">
 
     <ui:LogMessage Level="Info"
       Message="['[{{PROCESS_NAME}}] Process started | Ref: ' + in_TransactionItem.Reference]"
       DisplayName="Log: Process started" />
 
-    <!-- ════════════════════════════════════════════════════════════ -->
-    <!-- BUSINESS STEPS — Mapped from PDD                            -->
-    <!-- Each step is a separate Business/*.xaml workflow             -->
-    <!-- BusinessRuleException thrown inside steps is caught below    -->
-    <!-- ApplicationException is NOT caught — Main.xaml handles retry -->
-    <!-- ════════════════════════════════════════════════════════════ -->
+    <!-- ════════════════════════════════════════════════════════════════════ -->
+    <!-- BUSINESS STEPS — Wrapped in TryCatch for BusinessRuleException       -->
+    <!-- BusinessRuleException: caught, SetTransactionStatus → Failed, NO retry -->
+    <!-- ApplicationException: NOT caught, bubbles to Main.xaml for retry       -->
+    <!-- ════════════════════════════════════════════════════════════════════ -->
 
+    <TryCatch DisplayName="Execute business steps (catch BusinessRuleException only)"
+      sap2010:Annotation.AnnotationText="Catches BusinessRuleException → calls SetTransactionStatus with 'BusinessException' status.&#xA;ApplicationException is NOT caught — it bubbles to Main.xaml for retry handling.">
+      <TryCatch.Try>
+        <Sequence DisplayName="Business Steps">
 {{PROCESS_STEPS_PLACEHOLDER}}
 
-    <!-- ════════════════════════════════════════════════════════════ -->
+          <ui:LogMessage Level="Info"
+            Message="['[{{PROCESS_NAME}}] Process completed | Ref: ' + in_TransactionItem.Reference]"
+            DisplayName="Log: Process completed" />
+        </Sequence>
+      </TryCatch.Try>
 
-    <ui:LogMessage Level="Info"
-      Message="['[{{PROCESS_NAME}}] Process completed | Ref: ' + in_TransactionItem.Reference]"
-      DisplayName="Log: Process completed" />
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- CATCH: BusinessRuleException                                    -->
+      <!-- Sets status to Failed, logs the violation, does NOT rethrow     -->
+      <!-- This means NO retry happens for business rule violations        -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <TryCatch.Catches>
+        <Catch x:TypeArguments="uia:BusinessRuleException">
+          <ActivityAction x:TypeArguments="uia:BusinessRuleException">
+            <ActivityAction.Argument>
+              <DelegateInArgument x:TypeArguments="uia:BusinessRuleException" Name="businessException" />
+            </ActivityAction.Argument>
+            <Sequence DisplayName="Handle BusinessRuleException (no retry)"
+              sap2010:Annotation.AnnotationText="BusinessRuleException caught — mark transaction as Failed without retry.&#xA;The exception is NOT rethrown, so Main.xaml will proceed to next transaction.">
+
+              <ui:LogMessage Level="Warn"
+                Message="['[{{PROCESS_NAME}}] Business rule violation on ' + in_TransactionItem.Reference + ': ' + businessException.Message]"
+                DisplayName="Log: Business rule violation" />
+
+              <!-- Call SetTransactionStatus with BusinessException status -->
+              <ui:InvokeWorkflowFile
+                DisplayName="SetTransactionStatus → BusinessException (no retry)"
+                WorkflowFileName="Framework\SetTransactionStatus.xaml"
+                sap2010:Annotation.AnnotationText="Sets queue item status to Failed with BusinessException type.&#xA;NO retry will be triggered for this transaction.">
+                <ui:InvokeWorkflowFile.Arguments>
+                  <InArgument x:TypeArguments="ui:QueueItem" x:Key="in_TransactionItem">[in_TransactionItem]</InArgument>
+                  <InArgument x:TypeArguments="x:String" x:Key="in_TransactionStatus">["BusinessException"]</InArgument>
+                  <InArgument x:TypeArguments="s:Exception" x:Key="in_TransactionError">[businessException]</InArgument>
+                  <InArgument x:TypeArguments="scg:Dictionary(x:String, x:Object)" x:Key="in_Config">[in_Config]</InArgument>
+                </ui:InvokeWorkflowFile.Arguments>
+              </ui:InvokeWorkflowFile>
+
+              <!-- DO NOT Rethrow — BusinessRuleException is fully handled here -->
+
+            </Sequence>
+          </ActivityAction>
+        </Catch>
+      </TryCatch.Catches>
+      <!-- ApplicationException is NOT caught here — it bubbles to Main.xaml -->
+    </TryCatch>
 
   </Sequence>
 </Activity>

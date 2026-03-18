@@ -1,0 +1,53 @@
+# Process Definition Document: Invoice Processing Robot
+
+## Process Overview
+This robot processes invoices from an Orchestrator queue. For each invoice, it validates the data, logs into the ERP system, and posts the invoice.
+
+## Applications Used
+- WebERP (web-based ERP system)
+
+## Transaction Source
+Orchestrator Queue: InvoiceProcessingQueue
+
+## Transaction Item Fields
+- invoiceNumber (String): Unique invoice identifier
+- vendorCode (String): Vendor identifier
+- amount (Decimal): Invoice amount
+
+## Process Steps
+
+### Step 1: Validate Invoice Data
+Validates that the invoice has all required fields and the amount is positive.
+- Read invoiceNumber from transaction item
+- Read vendorCode from transaction item
+- Read amount from transaction item
+- If amount <= 0, throw BusinessRuleException("Invalid invoice amount: must be positive")
+- If vendorCode is empty, throw BusinessRuleException("Missing vendor code")
+
+Config keys used: None
+Output: isValid (Boolean)
+
+### Step 2: Post Invoice to ERP
+Posts the validated invoice to the WebERP system.
+- Navigate to Config('WebERP_URL')
+- Login using credentials from Config('WebERP_CredentialAsset')
+- Navigate to Invoice Entry screen
+- Enter invoice details
+- Click Submit button
+- Verify confirmation message appears, else throw ApplicationException("Invoice submission failed")
+
+Config keys used: WebERP_URL, WebERP_CredentialAsset
+Output: confirmationNumber (String)
+
+## Business Exceptions
+- InvalidInvoiceAmountException: Thrown when invoice amount is zero or negative
+- MissingVendorCodeException: Thrown when vendor code is missing
+
+## System Exceptions
+- ERPLoginFailedException: Thrown when login to WebERP fails
+- ERPSubmissionTimeoutException: Thrown when invoice submission times out
+
+## Configuration Settings
+- WebERP_URL: https://erp.company.com (Setting)
+- WebERP_CredentialAsset: WebERP_Credentials (Asset)
+- InvoiceAmountThreshold: 10000 (Constant) - Invoices above this require approval

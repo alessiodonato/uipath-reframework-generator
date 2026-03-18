@@ -7,7 +7,7 @@ setup(
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     author="ReFramework Generator Contributors",
-    url="https://github.com/YOUR_ORG/uipath-reframework-generator",
+    url="https://github.com/alessiodonato/uipath-reframework-generator",
     license="MIT",
     packages=find_packages(),
     package_data={
