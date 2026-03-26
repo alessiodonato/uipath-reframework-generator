@@ -363,3 +363,7 @@ Please open an issue before submitting large PRs.
 ## License
 
 [MIT](LICENSE) — free to use, modify, and distribute.
+
+---
+
+*Designed for UiPath Studio 24.10+*
