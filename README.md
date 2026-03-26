@@ -363,8 +363,3 @@ Please open an issue before submitting large PRs.
 ## License
 
 [MIT](LICENSE) — free to use, modify, and distribute.
-
----
-
-*Built with [Claude AI](https://anthropic.com) · Designed for UiPath Studio 24.10+*
-*Not affiliated with UiPath, Inc.*
