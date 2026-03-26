@@ -37,9 +37,18 @@ from pathlib import Path
 
 # ─── CONSTANTS ───────────────────────────────────────────────────────────────
 
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 TEMPLATES_DIR = Path(__file__).parent.parent / "assets" / "xaml-templates"
+SEQUENCE_TEMPLATES_DIR = Path(__file__).parent.parent / "assets" / "sequence-template"
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
+
+# Project variants
+VARIANTS = {
+    "reframework": "ReFramework with State Machine (default)",
+    "dispatcher": "ReFramework Dispatcher (loads data into queue)",
+    "performer": "ReFramework Performer (processes queue items)",
+    "sequence": "Simple Sequence (linear, no transaction loop)",
+}
 
 REQUIRED_PACKAGES = {
     "pdfminer": "pdfminer.six",
@@ -1118,7 +1127,7 @@ def generate_config_xlsx(metadata: dict, output_path: str):
 
 # ─── STEP 6: ASSEMBLE FULL PROJECT ───────────────────────────────────────────
 
-def build_project(metadata: dict, output_base: str) -> str:
+def build_project(metadata: dict, output_base: str, variant: str = "reframework") -> str:
     process_name = metadata["process_name"]
     project_dir = Path(output_base) / process_name
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -1127,7 +1136,7 @@ def build_project(metadata: dict, output_base: str) -> str:
     (project_dir / "Data").mkdir(exist_ok=True)
 
     print(f"\n📁 Assembling project: {process_name}")
-    print(f"   Steps: {len(metadata.get('process_steps', []))}  |  "
+    print(f"   Variant: {variant}  |  Steps: {len(metadata.get('process_steps', []))}  |  "
           f"Apps: {len(metadata.get('applications', []))}  |  "
           f"Source: {metadata.get('transaction_source', 'Queue')}")
 
@@ -1161,10 +1170,27 @@ def build_project(metadata: dict, output_base: str) -> str:
     print("  ✓ project.json")
 
     # ── Main.xaml ──
-    main_content = load_template("Main.xaml")
-    main_content = apply_common_replacements(main_content, metadata)
-    (project_dir / "Main.xaml").write_text(main_content, encoding="utf-8")
-    print("  ✓ Main.xaml (State Machine)")
+    if variant == "sequence":
+        # Use sequence template instead of state machine
+        seq_template = SEQUENCE_TEMPLATES_DIR / "Main.xaml"
+        if seq_template.exists():
+            main_content = seq_template.read_text(encoding="utf-8")
+        else:
+            main_content = load_template("Main.xaml")  # Fallback
+        main_content = apply_common_replacements(main_content, metadata)
+        # Add step invocations for sequence
+        steps_xml = "\n".join(
+            generate_process_step_invocation(step, process_name)
+            for step in metadata.get("process_steps", [])
+        ) or "          <!-- TODO: Add your process steps here -->"
+        main_content = main_content.replace("{{PROCESS_STEPS_PLACEHOLDER}}", steps_xml)
+        (project_dir / "Main.xaml").write_text(main_content, encoding="utf-8")
+        print("  ✓ Main.xaml (Sequence)")
+    else:
+        main_content = load_template("Main.xaml")
+        main_content = apply_common_replacements(main_content, metadata)
+        (project_dir / "Main.xaml").write_text(main_content, encoding="utf-8")
+        print("  ✓ Main.xaml (State Machine)")
 
     # ── Process.xaml ──
     steps_xml = "\n".join(
@@ -1380,6 +1406,12 @@ Examples:
     parser.add_argument("--api-key", help="Anthropic API key (or set ANTHROPIC_API_KEY env var)")
     parser.add_argument("--metadata-only", action="store_true",
                         help="Only print extracted metadata JSON, don't generate files")
+    parser.add_argument("--variant", choices=list(VARIANTS.keys()), default="reframework",
+                        help="Project variant (default: reframework)")
+    parser.add_argument("--validate", action="store_true",
+                        help="Validate generated XAML files after generation")
+    parser.add_argument("--resolve-nuget", action="store_true",
+                        help="Query NuGet API for latest package versions")
     parser.add_argument("--version", action="version", version=f"ReFramework Generator v{VERSION}")
 
     args = parser.parse_args()
@@ -1419,12 +1451,40 @@ Examples:
         print("\n" + json.dumps(metadata, indent=2, ensure_ascii=False))
         return
 
-    project_dir = build_project(metadata, "/tmp/reframework_gen")
+    # Resolve NuGet versions if requested
+    if args.resolve_nuget:
+        print("\n📦 Resolving NuGet package versions...")
+        try:
+            from resolve_nuget import get_latest_versions, COMMON_PACKAGES
+            versions = get_latest_versions(COMMON_PACKAGES[:4])
+            print(f"   ✓ Resolved {len(versions)} packages")
+        except Exception as e:
+            print(f"   ⚠️ Could not resolve NuGet versions: {e}")
+
+    # Build project with selected variant
+    print(f"\n🏗️ Building project (variant: {args.variant})...")
+    project_dir = build_project(metadata, "/tmp/reframework_gen", variant=args.variant)
     zip_path = zip_project(project_dir, args.output)
 
     total_xaml = len(list(Path(project_dir).rglob("*.xaml")))
     print(f"\n🎉 Done! Generated {total_xaml} XAML files")
-    print(f"   ZIP: {zip_path}")
+
+    # Validate if requested
+    if args.validate:
+        print("\n🔍 Validating generated XAML...")
+        try:
+            from validate_xaml import validate_project
+            result = validate_project(project_dir, lint=True)
+            print(f"   Files checked: {result.files_checked}")
+            print(f"   Errors: {result.error_count} | Warnings: {result.warn_count}")
+            if result.has_errors:
+                print("   ⚠️ Validation found errors - review before opening in Studio")
+            else:
+                print("   ✓ All validation checks passed")
+        except ImportError:
+            print("   ⚠️ Validation module not available")
+
+    print(f"\n   ZIP: {zip_path}")
     print(f"\n📋 Next steps:")
     print(f"   1. Extract the ZIP")
     print(f"   2. Open UiPath Studio → File → Open Project → project.json")

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TEST CASE: Unqualified DataTable type should be flagged as ERROR -->
+<!-- Expected: TYPE-001 error - should be sd:DataTable -->
+<Activity
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Sequence>
+    <Sequence.Variables>
+      <Variable x:TypeArguments="DataTable" Name="dtBad" />
+    </Sequence.Variables>
+  </Sequence>
+</Activity>

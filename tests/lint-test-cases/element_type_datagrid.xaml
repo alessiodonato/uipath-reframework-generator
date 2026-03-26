@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TEST CASE: ElementType DataGrid should be flagged as ERROR -->
+<!-- Expected: HALL-ElementType error - should be "Table" -->
+<Activity
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:uix="clr-namespace:UiPath.UIAutomationNext.Activities">
+  <uix:NExtractData ElementType="DataGrid" DisplayName="Bad extract" />
+</Activity>

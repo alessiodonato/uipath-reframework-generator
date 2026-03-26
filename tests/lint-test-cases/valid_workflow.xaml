@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TEST CASE: Valid workflow should pass all checks -->
+<!-- Expected: No errors -->
+<Activity
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:sd="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities"
+  xmlns:uix="clr-namespace:UiPath.UIAutomationNext.Activities"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation">
+
+  <Sequence DisplayName="Valid Workflow">
+    <Sequence.Variables>
+      <Variable x:TypeArguments="sd:DataTable" Name="dtData" />
+      <Variable x:TypeArguments="x:String" Name="strResult" />
+    </Sequence.Variables>
+
+    <ui:LogMessage Level="Info" Message="'Starting workflow'" DisplayName="Log: Start" />
+
+    <uix:NClick Version="V5" DisplayName="Click button">
+      <uix:NClick.Target>
+        <uix:Target>
+          <uix:TargetAnchorableModel>
+            <uix:TargetAnchorableModel.Selector>
+              <uix:SelectorModel Selector="&lt;webctrl tag='BUTTON' /&gt;" />
+            </uix:TargetAnchorableModel.Selector>
+          </uix:TargetAnchorableModel>
+        </uix:Target>
+      </uix:NClick.Target>
+    </uix:NClick>
+
+    <ui:LogMessage Level="Info" Message="'Workflow completed'" DisplayName="Log: End" />
+
+  </Sequence>
+</Activity>

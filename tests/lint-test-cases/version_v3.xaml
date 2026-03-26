@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TEST CASE: Version V3 should be flagged as ERROR -->
+<!-- Expected: HALL-Version error -->
+<Activity
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:uix="clr-namespace:UiPath.UIAutomationNext.Activities">
+  <uix:NClick Version="V3" DisplayName="Bad click" />
+</Activity>

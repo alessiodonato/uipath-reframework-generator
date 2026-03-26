@@ -150,6 +150,21 @@ python scripts/generate_reframework.py \
 python scripts/generate_reframework.py \
   --input ./MyProcess_PDD.pdf \
   --metadata-only
+
+# Generate with specific variant
+python scripts/generate_reframework.py \
+  --input ./MyProcess_PDD.pdf \
+  --variant sequence  # Options: reframework, dispatcher, performer, sequence
+
+# Generate and validate XAML
+python scripts/generate_reframework.py \
+  --input ./MyProcess_PDD.pdf \
+  --validate
+
+# Resolve latest NuGet package versions
+python scripts/generate_reframework.py \
+  --input ./MyProcess_PDD.pdf \
+  --resolve-nuget
 ```
 
 Dependencies are **auto-installed** on first run if missing.
@@ -209,6 +224,47 @@ InvoiceProcessing/
 
 ---
 
+## Additional tools
+
+### XAML Validation
+
+Validate generated XAML for common LLM hallucination patterns:
+
+```bash
+# Validate single file
+python -m validate_xaml path/to/file.xaml --lint
+
+# Validate entire project
+python -m validate_xaml path/to/project/ --lint --strict
+
+# Auto-fix common issues
+python -m validate_xaml path/to/project/ --fix
+
+# JSON output for CI/CD
+python -m validate_xaml path/to/project/ --json
+```
+
+### Config.xlsx Manager
+
+Manage Config.xlsx settings from CLI:
+
+```bash
+python scripts/config_manager.py list path/to/Config.xlsx
+python scripts/config_manager.py add path/to/Config.xlsx --name "NewSetting" --value "value"
+python scripts/config_manager.py validate path/to/Config.xlsx
+```
+
+### Framework Wiring
+
+Wire UiElement chains and insert workflow invocations:
+
+```bash
+python scripts/modify_framework.py wire-uielement path/to/project/
+python scripts/modify_framework.py insert-invoke path/to/Process.xaml --workflow "Business/NewStep.xaml"
+```
+
+---
+
 ## Project structure
 
 ```
@@ -218,41 +274,72 @@ uipath-reframework-generator/
 ├── LICENSE                            ← MIT
 ├── requirements.txt
 ├── setup.py
-├── OUTPUT_QUALITY_REPORT.md           ← Latest test run quality report
 ├── scripts/
-│   └── generate_reframework.py        ← Main generator (1000+ lines)
+│   ├── generate_reframework.py        ← Main generator (1400+ lines)
+│   ├── config_manager.py              ← Config.xlsx CLI manager
+│   ├── modify_framework.py            ← Framework wiring CLI
+│   ├── resolve_nuget.py               ← NuGet version resolution
+│   ├── generators/                    ← Deterministic XAML generators
+│   │   ├── core.py                    ← Sequence, If, ForEach, TryCatch, etc.
+│   │   ├── logging.py                 ← LogMessage, Comment
+│   │   ├── invoke.py                  ← InvokeWorkflowFile
+│   │   ├── orchestrator.py            ← GetQueueItem, SetTransactionStatus
+│   │   ├── ui_automation.py           ← NClick, NTypeInto, NGetText (V5)
+│   │   ├── error_handling.py          ← Throw, Rethrow, RetryScope
+│   │   └── data.py                    ← BuildDataTable, FilterDataTable
+│   └── validate_xaml/                 ← XAML validation module
+│       ├── validator.py               ← Core validation logic
+│       ├── constants.py               ← Locked enums, known activities
+│       └── fixer.py                   ← Auto-fix common issues
 ├── assets/
-│   └── xaml-templates/
-│       ├── Main.xaml                  ← State Machine template
-│       ├── Process.xaml               ← Process loop + BusinessRuleException catch
-│       ├── InitAllApplications.xaml   ← App init template
-│       └── GetTransactionData.xaml    ← Transaction retrieval template
+│   ├── xaml-templates/                ← ReFramework templates
+│   │   ├── Main.xaml                  ← State Machine template
+│   │   ├── Process.xaml               ← Process loop + BusinessRuleException catch
+│   │   ├── InitAllApplications.xaml   ← App init template
+│   │   └── GetTransactionData.xaml    ← Transaction retrieval template
+│   └── sequence-template/             ← Simple sequence template
+│       └── Main.xaml                  ← Linear automation (no transaction loop)
 ├── references/
 │   ├── extraction-prompt.md           ← Claude API system prompt
 │   ├── xaml-guide.md                  ← XAML patterns, type mappings, log templates
-│   └── config-template.md             ← Config.xlsx structure + openpyxl code
+│   ├── config-template.md             ← Config.xlsx structure + openpyxl code
+│   ├── lint-rules.md                  ← Complete lint rules documentation
+│   ├── expressions.md                 ← VB.NET expression reference
+│   ├── decomposition.md               ← Workflow decomposition patterns
+│   └── cheat-sheet.md                 ← Quick reference for CLI and generators
 └── tests/
-    ├── test_generator.py              ← Validation test suite
+    ├── test_generator.py              ← Generator validation tests
+    ├── test_generators.py             ← XAML generator unit tests (55 tests)
+    ├── test_validation.py             ← Validation module tests
     ├── test_pdd.txt                   ← Sample PDD for testing
-    └── OUTPUT_QUALITY_REPORT.md       ← Test results
+    └── lint-test-cases/               ← XAML files for lint testing
+        ├── valid_workflow.xaml
+        ├── version_v3.xaml
+        └── unqualified_datatable.xaml
 ```
 
 ---
 
 ## Testing
 
-Run the test suite to validate generator output:
+Run the complete test suite (55 tests):
 
 ```bash
-python tests/test_generator.py
+python -m unittest discover tests/ -v
 ```
 
-The test:
-- Generates a project from mock metadata (no API call needed)
-- Validates all XAML files are well-formed XML
-- Checks for proper Object type usage
-- Verifies log message format consistency
-- Generates `OUTPUT_QUALITY_REPORT.md` with results
+The tests cover:
+- **XAML generators**: All deterministic generators produce valid XML
+- **Validation module**: Hallucination detection, enum validation, type checking
+- **Lint rules**: Version=V3 detection, ElementType=DataGrid, unqualified DataTable
+- **Error handling**: BusinessRuleException vs ApplicationException patterns
+
+Run individual test modules:
+
+```bash
+python -m unittest tests.test_generators -v    # Generator tests
+python -m unittest tests.test_validation -v   # Validation tests
+```
 
 ---
 
@@ -260,13 +347,14 @@ The test:
 
 Contributions welcome! Open issues and PRs for:
 
-- [ ] Additional XAML activity types (Send Email, HTTP Request, DB Query)
-- [ ] Linear process template support (non-transactional)
+- [x] ~~Additional XAML activity types~~ *(added deterministic generators)*
+- [x] ~~Linear process template support~~ *(added --variant sequence)*
 - [ ] Orchestrator deployment script generation (`publish.ps1`)
-- [x] ~~XAML validation before packaging~~ *(added in test suite)*
+- [x] ~~XAML validation before packaging~~ *(added validate_xaml module with 30+ lint rules)*
 - [x] ~~Sample PDD documents for testing~~ *(added test_pdd.txt)*
+- [x] ~~NuGet version resolution~~ *(added --resolve-nuget flag)*
 - [ ] Support for UiPath Document Understanding activity stubs
-- [ ] Multi-language support (English + Italian PDD tested)
+- [x] ~~Multi-language support~~ *(English + Italian PDD tested)*
 
 Please open an issue before submitting large PRs.
 
